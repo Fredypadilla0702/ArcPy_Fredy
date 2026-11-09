@@ -1,0 +1,629 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Distribución Likert - Universidad de Córdoba</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        font-family: "Segoe UI", Arial, sans-serif;
+        margin: 0;
+        padding: 12px;
+        background: #ffffff;
+        color: #333333;
+    }
+
+    .contenedor {
+        width: 100%;
+        max-width: 1000px;
+        margin: auto;
+    }
+
+    h2 {
+        font-size: 22px;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+
+    .subtitulo {
+        color: #777;
+        font-size: 14px;
+        margin-bottom: 20px;
+    }
+
+    .selector-contenedor {
+        margin-bottom: 20px;
+    }
+
+    label {
+        font-weight: 600;
+        display: block;
+        margin-bottom: 8px;
+    }
+
+    select {
+        width: 100%;
+        max-width: 400px;
+        padding: 10px;
+        font-size: 15px;
+        border: 1px solid #cccccc;
+        border-radius: 6px;
+        background: #ffffff;
+        cursor: pointer;
+    }
+
+    .grafica-contenedor {
+        position: relative;
+        width: 100%;
+        height:  min(400px, 55vh);
+        min-height: 260px;
+    }
+
+    .mensaje {
+        margin-top: 12px;
+        font-size: 13px;
+        color: #777;
+    }
+
+    .error {
+        color: #b00020;
+    }
+
+    @media (max-width: 600px) {
+        body {
+            padding: 12px;
+        }
+
+        h2 {
+            font-size: 18px;
+        }
+
+        .grafica-contenedor {
+            height: 300px;
+            min-height: 240px;
+        }
+    }
+</style>
+</head>
+
+<body>
+
+<div class="contenedor">
+
+    <h2>Distribución de respuestas Likert</h2>
+
+    <div class="subtitulo">
+        Valoración de los servicios ecosistémicos
+        <br>
+        Universidad de Córdoba
+    </div>
+
+    <div class="selector-contenedor">
+
+        <label for="selectorServicio">
+            Seleccionar servicio ecosistémico
+        </label>
+
+        <select id="selectorServicio">
+            <option value="">Cargando servicios...</option>
+        </select>
+
+    </div>
+
+    <div class="grafica-contenedor">
+        <canvas id="graficaLikert"></canvas>
+    </div>
+
+    <div id="mensaje" class="mensaje">
+        Consultando información...
+    </div>
+
+</div>
+
+<script>
+
+// ============================================
+// 1. CONFIGURACIÓN DE ARCGIS ONLINE
+// ============================================
+
+const URL_CAPA =
+"https://services5.arcgis.com/85aFYYEQ9koK4ueu/arcgis/rest/services/ServiciosEcosistemicosUNICOR_2/FeatureServer/0/query";
+
+
+// ============================================
+// 2. PALETAS DE COLORES POR SERVICIO
+// ============================================
+
+// Cada paleta tiene cinco tonos para Likert 1-5.
+// Puedes cambiar los colores posteriormente.
+
+const PALETAS = {
+
+    "Regulación": [
+        "#DEEBF7",
+        "#9ECAE1",
+        "#6BAED6",
+        "#3182BD",
+        "#08519C"
+    ],
+
+    "Culturales": [
+        "#E5F5E0",
+        "#A1D99B",
+        "#74C476",
+        "#31A354",
+        "#006D2C"
+    ],
+
+    "Abastecimiento": [
+        "#FEE6CE",
+        "#FDAE6B",
+        "#FD8D3C",
+        "#E6550D",
+        "#A63603"
+    ],
+
+    "Soporte": [
+        "#EFEDF5",
+        "#BCBDDC",
+        "#9E9AC8",
+        "#756BB1",
+        "#54278F"
+    ]
+
+};
+
+
+// ============================================
+// 3. PALETAS ALTERNATIVAS AUTOMÁTICAS
+// ============================================
+
+const PALETAS_ADICIONALES = [
+
+    ["#FDE0DD", "#FCC5C0", "#FA9FB5", "#F768A1", "#C51B8A"],
+
+    ["#FFFFCC", "#C2E699", "#78C679", "#31A354", "#006837"],
+
+    ["#E0F3F8", "#ABD9E9", "#74ADD1", "#4575B4", "#313695"],
+
+    ["#F2F0F7", "#CBC9E2", "#9E9AC8", "#756BB1", "#4A1486"]
+
+];
+
+
+// ============================================
+// 4. VARIABLES
+// ============================================
+
+let datosOriginales = [];
+
+let grafica = null;
+
+
+// ============================================
+// 5. CONSULTAR LOS REGISTROS DE ARCGIS
+// ============================================
+
+async function consultarDatos() {
+
+    const mensaje = document.getElementById("mensaje");
+
+    try {
+
+        datosOriginales = [];
+
+        const TAMANO_BLOQUE = 1000;
+
+        let desplazamiento = 0;
+        let continuar = true;
+
+        while (continuar) {
+
+            const parametros = new URLSearchParams({
+
+                where: "1=1",
+
+                outFields: "SERVICIO,VALOR",
+
+                returnGeometry: "false",
+
+                resultRecordCount: TAMANO_BLOQUE,
+
+                resultOffset: desplazamiento,
+
+                orderByFields: "OBJECTID ASC",
+
+                f: "json"
+
+            });
+
+            const respuesta = await fetch(
+                URL_CAPA + "?" + parametros.toString()
+            );
+
+            const datos = await respuesta.json();
+
+            if (datos.error) {
+
+                throw new Error(datos.error.message);
+
+            }
+
+            const registros = datos.features || [];
+
+            // Agregar los registros del bloque
+            datosOriginales.push(
+                ...registros.map(f => f.attributes)
+            );
+
+            mensaje.textContent =
+                "Cargando respuestas: " +
+                datosOriginales.length +
+                " registros...";
+
+            // Si recibimos menos registros que el tamaño
+            // solicitado, hemos llegado al final.
+
+            if (
+                registros.length < TAMANO_BLOQUE
+            ) {
+
+                continuar = false;
+
+            } else {
+
+                desplazamiento += registros.length;
+
+            }
+
+        }
+
+        // Crear selector cuando finalice la descarga
+        crearSelector();
+
+        mensaje.textContent =
+            "Datos cargados correctamente: " +
+            datosOriginales.length +
+            " respuestas.";
+
+    }
+
+    catch (error) {
+
+        mensaje.textContent =
+            "Error al consultar la capa: " +
+            error.message;
+
+        mensaje.classList.add("error");
+
+        console.error(error);
+
+    }
+
+}
+
+
+// ============================================
+// 6. CREAR SELECTOR DE SERVICIOS
+// ============================================
+
+function crearSelector() {
+
+    const selector =
+        document.getElementById("selectorServicio");
+
+    const servicios = [
+        ...new Set(
+            datosOriginales.map(
+                d => d.SERVICIO
+            )
+        )
+    ].filter(
+        s => s !== null && s !== undefined && s !== ""
+    ).sort();
+
+    selector.innerHTML = "";
+
+    servicios.forEach(servicio => {
+
+        const opcion = document.createElement("option");
+
+        opcion.value = servicio;
+
+        opcion.textContent = servicio;
+
+        selector.appendChild(opcion);
+
+    });
+
+    selector.addEventListener(
+        "change",
+        actualizarGrafica
+    );
+
+    actualizarGrafica();
+
+}
+
+
+// ============================================
+// 7. ASIGNAR PALETA A CADA SERVICIO
+// ============================================
+
+function obtenerPaleta(servicio) {
+
+    // 1. Usar una paleta explícita si el nombre coincide
+    // exactamente con una de las categorías configuradas.
+    if (PALETAS[servicio]) {
+        return PALETAS[servicio];
+    }
+
+    // 2. Para cualquier otro servicio, generar una gama
+    // propia y estable a partir de su nombre.
+    // Así no depende de la posición del servicio en el selector.
+    let hash = 0;
+    for (let i = 0; i < servicio.length; i++) {
+        hash = ((hash << 5) - hash) + servicio.charCodeAt(i);
+        hash |= 0;
+    }
+
+    const tono = Math.abs(hash) % 360;
+
+    // Cinco tonos de la misma familia cromática:
+    // Likert 1 = más claro; Likert 5 = más oscuro.
+    return [
+        `hsl(${tono}, 65%, 90%)`,
+        `hsl(${tono}, 65%, 76%)`,
+        `hsl(${tono}, 65%, 62%)`,
+        `hsl(${tono}, 65%, 48%)`,
+        `hsl(${tono}, 70%, 34%)`
+    ];
+}
+
+
+// ============================================
+// 8. CONTAR RESPUESTAS LIKERT
+// ============================================
+
+function contarRespuestas(servicio) {
+
+    const frecuencias = [
+        0, 0, 0, 0, 0
+    ];
+
+    datosOriginales.forEach(registro => {
+
+        if (
+            registro.SERVICIO === servicio
+        ) {
+
+            const valor = Number(
+                registro.VALOR
+            );
+
+            if (
+                valor >= 1 &&
+                valor <= 5 &&
+                Number.isInteger(valor)
+            ) {
+
+                frecuencias[
+                    valor - 1
+                ]++;
+
+            }
+
+        }
+
+    });
+
+    return frecuencias;
+
+}
+
+
+// ============================================
+// 9. CREAR / ACTUALIZAR GRÁFICA
+// ============================================
+
+function actualizarGrafica() {
+
+    const servicio =
+        document.getElementById(
+            "selectorServicio"
+        ).value;
+
+    if (!servicio) return;
+
+    const frecuencias =
+        contarRespuestas(servicio);
+
+    const colores =
+        obtenerPaleta(servicio);
+
+    const ctx =
+        document.getElementById(
+            "graficaLikert"
+        ).getContext("2d");
+
+
+    // Destruir gráfica anterior
+    // para evitar superposición.
+
+    if (grafica) {
+
+        grafica.destroy();
+
+    }
+
+
+    // Crear nueva gráfica
+
+    grafica = new Chart(ctx, {
+
+        type: "bar",
+
+        data: {
+
+            labels: [
+                "1",
+                "2",
+                "3",
+                "4",
+                "5"
+            ],
+
+            datasets: [
+
+                {
+
+                    label: "Número de respuestas",
+
+                    data: frecuencias,
+
+                    backgroundColor: colores,
+
+                    borderColor: colores,
+
+                    borderWidth: 1,
+
+                    borderRadius: 5,
+
+                    barPercentage: 0.65,
+
+                    categoryPercentage: 0.8
+
+                }
+
+            ]
+
+        },
+
+        options: {
+
+            responsive: true,
+
+            maintainAspectRatio: false,
+
+            animation: {
+
+                duration: 500
+
+            },
+
+            plugins: {
+
+                legend: {
+
+                    display: false
+
+                },
+
+                tooltip: {
+
+                    callbacks: {
+
+                        label: function(context) {
+
+                            return (
+                                "Frecuencia: " +
+                                context.parsed.y
+                            );
+
+                        }
+
+                    }
+
+                },
+
+                title: {
+
+                    display: true,
+
+                    text:
+                        "Servicio: " + servicio,
+
+                    font: {
+
+                        size: 16
+
+                    }
+
+                }
+
+            },
+
+            scales: {
+
+                x: {
+
+                    title: {
+
+                        display: true,
+
+                        text:
+                            "Valor de la escala Likert"
+
+                    },
+
+                    ticks: {
+
+                        font: {
+
+                            size: 14
+
+                        }
+
+                    }
+
+                },
+
+                y: {
+
+                    beginAtZero: true,
+
+                    ticks: {
+
+                        precision: 0
+
+                    },
+
+                    title: {
+
+                        display: true,
+
+                        text:
+                            "Frecuencia de respuestas"
+
+                    }
+
+                }
+
+            }
+
+        }
+
+    });
+
+}
+
+
+// ============================================
+// 10. INICIAR APLICACIÓN
+// ============================================
+
+consultarDatos();
+
+</script>
+
+</body>
+</html>
